@@ -14,6 +14,8 @@ local HALF_Z = PLATFORM_SIZE.Z / 2
 
 local DEFAULT_SPAWN_RATE = 1
 local DEFAULT_MAX_ENEMIES = 20
+local POSITION_PRECISION = 100
+local YAW_PRECISION = 1000
 
 local config = {
 	spawnRate = DEFAULT_SPAWN_RATE,
@@ -77,6 +79,36 @@ local nextEnemyNumber = 0
 local spawnAccumulator = 0
 local serverRng = Random.new()
 
+local enemyMaterials = {
+	Enum.Material.Plastic,
+	Enum.Material.SmoothPlastic,
+	Enum.Material.Neon,
+	Enum.Material.Metal,
+	Enum.Material.Glass,
+	Enum.Material.ForceField,
+}
+
+local enemyColors = {
+	Color3.fromRGB(255, 84, 84),
+	Color3.fromRGB(255, 176, 72),
+	Color3.fromRGB(73, 214, 155),
+	Color3.fromRGB(85, 170, 255),
+	Color3.fromRGB(178, 121, 255),
+	Color3.fromRGB(255, 99, 185),
+}
+
+local function roundTo(value, precision)
+	return math.round(value * precision) / precision
+end
+
+local function colorPayload(color)
+	return {
+		r = math.round(color.R * 255),
+		g = math.round(color.G * 255),
+		b = math.round(color.B * 255),
+	}
+end
+
 local function randomPlatformPoint(rng, margin, y)
 	return Vector3.new(
 		rng:NextNumber(-HALF_X + margin, HALF_X - margin),
@@ -92,20 +124,41 @@ local function spawnEnemy()
 
 	nextEnemyNumber += 1
 
+	local seed = serverRng:NextInteger(1, 1000000000)
+	local rng = Random.new(seed)
+	local scale = rng:NextNumber(0.8, 1.35)
+	local radius = scale
 	local id = string.format("EN-%04d", nextEnemyNumber)
-	local position = randomPlatformPoint(serverRng, 1.5, PLATFORM_TOP_Y + 1)
+	local position = randomPlatformPoint(rng, radius + 0.5, PLATFORM_TOP_Y + radius)
+	local yaw = rng:NextNumber(-math.pi, math.pi)
+	local material = enemyMaterials[rng:NextInteger(1, #enemyMaterials)]
+	local color = enemyColors[rng:NextInteger(1, #enemyColors)]
 
-	enemies[id] = {
+	local enemy = {
 		id = id,
+		seed = seed,
 		position = position,
+		yaw = yaw,
+		scale = scale,
+		radius = radius,
+		speed = rng:NextNumber(7, 12),
+		material = material,
+		color = color,
 	}
 
+	enemies[id] = enemy
 	table.insert(enemyOrder, id)
 	remote:FireAllClients("Spawn", {
-		id = id,
-		x = position.X,
-		y = position.Y,
-		z = position.Z,
+		id = enemy.id,
+		x = roundTo(enemy.position.X, POSITION_PRECISION),
+		y = roundTo(enemy.position.Y, POSITION_PRECISION),
+		z = roundTo(enemy.position.Z, POSITION_PRECISION),
+		yaw = roundTo(enemy.yaw, YAW_PRECISION),
+		scale = roundTo(enemy.scale, 100),
+		radius = roundTo(enemy.radius, 100),
+		speed = roundTo(enemy.speed, 100),
+		material = enemy.material.Name,
+		color = colorPayload(enemy.color),
 	})
 end
 
