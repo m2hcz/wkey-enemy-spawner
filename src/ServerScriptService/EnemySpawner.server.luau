@@ -14,6 +14,10 @@ local HALF_Z = PLATFORM_SIZE.Z / 2
 
 local DEFAULT_SPAWN_RATE = 1
 local DEFAULT_MAX_ENEMIES = 20
+local MIN_SPAWN_RATE = 0.25
+local MAX_SPAWN_RATE = 20
+local MIN_MAX_ENEMIES = 1
+local MAX_MAX_ENEMIES = 250
 local SIMULATION_HZ = 20
 local SNAPSHOT_HZ = 10
 local ACTION_DISTANCE = 4.5
@@ -259,6 +263,13 @@ local function spawnEnemy()
 	remote:FireAllClients("Spawn", spawnPayload(enemy))
 end
 
+local function clearEnemies(sourceName)
+	table.clear(enemies)
+	table.clear(enemyOrder)
+	remote:FireAllClients("Clear")
+	print(string.format("[EnemySpawner] %s cleared all enemies.", sourceName))
+end
+
 local function updateEnemy(enemy, dt, now)
 	local targetPlayer, targetRoot, targetDistanceSquared = getClosestPlayerOnPlatform(enemy.position)
 	local targetPosition
@@ -329,9 +340,35 @@ local function syncPlayer(player)
 	})
 end
 
-remote.OnServerEvent:Connect(function(player, message)
+local function setConfig(player, requestedConfig)
+	if type(requestedConfig) ~= "table" then
+		return
+	end
+
+	if type(requestedConfig.spawnRate) == "number" then
+		config.spawnRate = math.clamp(requestedConfig.spawnRate, MIN_SPAWN_RATE, MAX_SPAWN_RATE)
+	end
+
+	if type(requestedConfig.maxEnemies) == "number" then
+		config.maxEnemies = math.clamp(math.round(requestedConfig.maxEnemies), MIN_MAX_ENEMIES, MAX_MAX_ENEMIES)
+	end
+
+	remote:FireAllClients("Config", configPayload())
+	print(string.format(
+		"[EnemySpawner] %s set spawnRate=%.2f maxEnemies=%d.",
+		player.Name,
+		config.spawnRate,
+		config.maxEnemies
+	))
+end
+
+remote.OnServerEvent:Connect(function(player, message, data)
 	if message == "RequestSync" then
 		syncPlayer(player)
+	elseif message == "SetConfig" then
+		setConfig(player, data)
+	elseif message == "KillAll" then
+		clearEnemies(player.Name)
 	end
 end)
 
