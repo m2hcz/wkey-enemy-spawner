@@ -14,6 +14,9 @@ local HALF_Z = PLATFORM_SIZE.Z / 2
 
 local DEFAULT_SPAWN_RATE = 1
 local DEFAULT_MAX_ENEMIES = 20
+local SIMULATION_HZ = 20
+local ACTION_DISTANCE = 4.5
+local ACTION_COOLDOWN = 1.25
 local POSITION_PRECISION = 100
 local YAW_PRECISION = 1000
 
@@ -77,6 +80,7 @@ local enemies = {}
 local enemyOrder = {}
 local nextEnemyNumber = 0
 local spawnAccumulator = 0
+local simulationAccumulator = 0
 local serverRng = Random.new()
 
 local enemyMaterials = {
@@ -117,6 +121,52 @@ local function randomPlatformPoint(rng, margin, y)
 	)
 end
 
+local function clampEnemyPosition(position, radius)
+	return Vector3.new(
+		math.clamp(position.X, -HALF_X + radius, HALF_X - radius),
+		PLATFORM_TOP_Y + radius,
+		math.clamp(position.Z, -HALF_Z + radius, HALF_Z - radius)
+	)
+end
+
+local function isOnPlatform(position)
+	return position.X >= -HALF_X
+		and position.X <= HALF_X
+		and position.Z >= -HALF_Z
+		and position.Z <= HALF_Z
+		and position.Y >= PLATFORM_TOP_Y - 6
+		and position.Y <= PLATFORM_TOP_Y + 18
+end
+
+local function flatDistanceSquared(a, b)
+	local dx = a.X - b.X
+	local dz = a.Z - b.Z
+	return dx * dx + dz * dz
+end
+
+local function getClosestPlayerOnPlatform(position)
+	local closestPlayer = nil
+	local closestRoot = nil
+	local closestDistanceSquared = math.huge
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+		if root and humanoid and humanoid.Health > 0 and isOnPlatform(root.Position) then
+			local distanceSquared = flatDistanceSquared(position, root.Position)
+			if distanceSquared < closestDistanceSquared then
+				closestPlayer = player
+				closestRoot = root
+				closestDistanceSquared = distanceSquared
+			end
+		end
+	end
+
+	return closestPlayer, closestRoot, closestDistanceSquared
+end
+
 local function spawnEnemy()
 	if #enemyOrder >= config.maxEnemies then
 		return
@@ -144,6 +194,9 @@ local function spawnEnemy()
 		speed = rng:NextNumber(7, 12),
 		material = material,
 		color = color,
+		wanderGoal = randomPlatformPoint(rng, radius + 0.5, PLATFORM_TOP_Y + radius),
+		nextWanderAt = os.clock() + rng:NextNumber(1.5, 4),
+		lastActionAt = 0,
 	}
 
 	enemies[id] = enemy
@@ -160,6 +213,56 @@ local function spawnEnemy()
 		material = enemy.material.Name,
 		color = colorPayload(enemy.color),
 	})
+end
+
+local function updateEnemy(enemy, dt, now)
+	local targetPlayer, targetRoot, targetDistanceSquared = getClosestPlayerOnPlatform(enemy.position)
+	local targetPosition
+	local speed = enemy.speed
+
+	if targetRoot then
+		targetPosition = Vector3.new(targetRoot.Position.X, enemy.position.Y, targetRoot.Position.Z)
+
+		if targetDistanceSquared <= ACTION_DISTANCE * ACTION_DISTANCE and now - enemy.lastActionAt >= ACTION_COOLDOWN then
+			enemy.lastActionAt = now
+			print(string.format("[EnemySpawner] Enemy %s reached %s.", enemy.id, targetPlayer.Name))
+			remote:FireAllClients("Action", {
+				id = enemy.id,
+				playerName = targetPlayer.Name,
+			})
+		end
+	else
+		if now >= enemy.nextWanderAt or flatDistanceSquared(enemy.position, enemy.wanderGoal) <= 2.25 then
+			local rng = Random.new(enemy.seed + math.floor(now * 1000))
+			enemy.wanderGoal = randomPlatformPoint(rng, enemy.radius + 0.5, PLATFORM_TOP_Y + enemy.radius)
+			enemy.nextWanderAt = now + rng:NextNumber(1.5, 4)
+		end
+
+		targetPosition = enemy.wanderGoal
+		speed = enemy.speed * 0.45
+	end
+
+	local delta = Vector3.new(targetPosition.X - enemy.position.X, 0, targetPosition.Z - enemy.position.Z)
+	local distance = delta.Magnitude
+
+	if distance > 0.05 then
+		local direction = delta.Unit
+		local stepDistance = math.min(distance, speed * dt)
+		local nextPosition = enemy.position + direction * stepDistance
+		enemy.position = clampEnemyPosition(nextPosition, enemy.radius)
+		enemy.yaw = math.atan2(-direction.X, -direction.Z)
+	end
+end
+
+local function updateEnemies(dt)
+	local now = os.clock()
+
+	for _, id in ipairs(enemyOrder) do
+		local enemy = enemies[id]
+		if enemy then
+			updateEnemy(enemy, dt, now)
+		end
+	end
 end
 
 local function connectPlayer(player)
@@ -188,5 +291,12 @@ RunService.Heartbeat:Connect(function(dt)
 			spawnAccumulator -= spawnInterval
 			spawnEnemy()
 		end
+	end
+
+	simulationAccumulator += dt
+	if simulationAccumulator >= 1 / SIMULATION_HZ then
+		local step = simulationAccumulator
+		simulationAccumulator = 0
+		updateEnemies(step)
 	end
 end)
