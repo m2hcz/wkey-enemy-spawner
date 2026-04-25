@@ -2,9 +2,9 @@
 
 ## Approach
 
-I built the enemy system around an authoritative server simulation with client-side visual rendering. The server stores each enemy as data: ID, position, yaw, random visual attributes, speed, and simple behavior state. It updates that state at a fixed simulation rate and sends compact snapshots to clients at 10 Hz.
+I built the enemy system around an authoritative server simulation with client-side visual rendering. The server stores each enemy as data: ID, position, yaw, random visual attributes, speed, and simple behavior state. It updates that state with fixed movement steps and sends compact snapshots to clients at 10 Hz.
 
-Clients do not receive moving server-owned enemy Parts. Instead, each client creates anchored local enemy visuals from the server's spawn payload and interpolates between snapshot positions. This keeps replication cost focused on small RemoteEvent payloads instead of default physics/property replication.
+Clients do not receive moving server-owned enemy Parts. Instead, each client creates anchored local enemy visuals from the server's spawn payload and interpolates between snapshot positions with short dead-reckoning prediction. This keeps replication cost focused on small RemoteEvent payloads instead of default physics/property replication, while avoiding visible stutter between packets.
 
 Client-to-server RemoteEvent actions are rate-limited per player/action and payloads are validated before they mutate shared state. This prevents repeated sync requests, config spam, kill-all spam, and invalid enemy click reports from doing unnecessary server work.
 

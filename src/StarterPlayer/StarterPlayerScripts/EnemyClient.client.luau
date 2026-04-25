@@ -6,6 +6,12 @@ local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 local remote = ReplicatedStorage:WaitForChild("EnemySpawnerRemote")
 
+local VISUAL_SMOOTHNESS = 32
+local EXTRAPOLATION_LIMIT = 0.16
+local SNAP_DISTANCE = 7
+local DEFAULT_HALF_X = 25
+local DEFAULT_HALF_Z = 25
+
 local visualsFolder = workspace:FindFirstChild("ClientEnemies_" .. localPlayer.UserId)
 if visualsFolder then
 	visualsFolder:Destroy()
@@ -16,6 +22,10 @@ visualsFolder.Name = "ClientEnemies_" .. localPlayer.UserId
 visualsFolder.Parent = workspace
 
 local visuals = {}
+local platformBounds = {
+	halfX = DEFAULT_HALF_X,
+	halfZ = DEFAULT_HALF_Z,
+}
 
 local config = {
 	spawnRate = 1,
@@ -146,6 +156,23 @@ local function updateHud()
 	rateValue.Text = string.format("%.2f/s", config.spawnRate)
 	maxValue.Text = tostring(config.maxEnemies)
 	countLabel.Text = string.format("%d active", visualCount())
+end
+
+local function clampVisualPoint(x, z, radius)
+	return math.clamp(x, -platformBounds.halfX + radius, platformBounds.halfX - radius),
+		math.clamp(z, -platformBounds.halfZ + radius, platformBounds.halfZ - radius)
+end
+
+local function clampVelocity(vx, vz, maxSpeed)
+	local speedSquared = vx * vx + vz * vz
+	local maxSpeedSquared = maxSpeed * maxSpeed
+
+	if speedSquared <= maxSpeedSquared then
+		return vx, vz
+	end
+
+	local scale = maxSpeed / math.sqrt(speedSquared)
+	return vx * scale, vz * scale
 end
 
 local function sendConfig(nextConfig)
@@ -290,15 +317,25 @@ local function createVisual(payload)
 		body = body,
 		baseColor = baseColor,
 		currentCFrame = cframe,
-		targetCFrame = cframe,
+		targetX = payload.x,
+		targetZ = payload.z,
+		velocityX = 0,
+		velocityZ = 0,
+		maxPredictionSpeed = (payload.speed or 12) * 1.5,
+		lastSnapshotAt = os.clock(),
 		y = payload.y,
+		yaw = payload.yaw or 0,
+		radius = payload.radius or scale,
 		actionUntil = 0,
+		isActing = false,
 	}
 
 	updateHud()
 end
 
 local function applySnapshot(snapshot)
+	local now = os.clock()
+
 	for _, item in ipairs(snapshot) do
 		local id = item[1]
 		local x = item[2]
@@ -307,7 +344,20 @@ local function applySnapshot(snapshot)
 		local visual = visuals[id]
 
 		if visual then
-			visual.targetCFrame = CFrame.new(x, visual.y, z) * CFrame.Angles(0, yaw, 0)
+			local elapsed = now - visual.lastSnapshotAt
+			if elapsed > 0.015 and elapsed < 0.5 then
+				local velocityX = (x - visual.targetX) / elapsed
+				local velocityZ = (z - visual.targetZ) / elapsed
+				visual.velocityX, visual.velocityZ = clampVelocity(velocityX, velocityZ, visual.maxPredictionSpeed)
+			else
+				visual.velocityX = 0
+				visual.velocityZ = 0
+			end
+
+			visual.targetX = x
+			visual.targetZ = z
+			visual.yaw = yaw
+			visual.lastSnapshotAt = now
 		end
 	end
 end
@@ -336,6 +386,11 @@ remote.OnClientEvent:Connect(function(message, data)
 	if message == "Sync" then
 		clearVisuals()
 		applyConfig(data.config)
+		if type(data.platform) == "table" then
+			platformBounds.halfX = (data.platform.sizeX or DEFAULT_HALF_X * 2) / 2
+			platformBounds.halfZ = (data.platform.sizeZ or DEFAULT_HALF_Z * 2) / 2
+		end
+
 		for _, payload in ipairs(data.enemies or {}) do
 			createVisual(payload)
 		end
@@ -373,17 +428,32 @@ mouse.Button1Down:Connect(function()
 end)
 
 RunService.RenderStepped:Connect(function(dt)
-	local alpha = 1 - math.exp(-dt * 18)
+	local alpha = 1 - math.exp(-dt * VISUAL_SMOOTHNESS)
 	local now = os.clock()
 
 	for _, visual in pairs(visuals) do
-		visual.currentCFrame = visual.currentCFrame:Lerp(visual.targetCFrame, alpha)
+		local predictionTime = math.min(now - visual.lastSnapshotAt, EXTRAPOLATION_LIMIT)
+		local predictedX = visual.targetX + visual.velocityX * predictionTime
+		local predictedZ = visual.targetZ + visual.velocityZ * predictionTime
+		predictedX, predictedZ = clampVisualPoint(predictedX, predictedZ, visual.radius)
+
+		local predictedCFrame = CFrame.new(predictedX, visual.y, predictedZ) * CFrame.Angles(0, visual.yaw, 0)
+		local currentPosition = visual.currentCFrame.Position
+		local dx = currentPosition.X - predictedX
+		local dz = currentPosition.Z - predictedZ
+
+		if dx * dx + dz * dz >= SNAP_DISTANCE * SNAP_DISTANCE then
+			visual.currentCFrame = predictedCFrame
+		else
+			visual.currentCFrame = visual.currentCFrame:Lerp(predictedCFrame, alpha)
+		end
+
 		visual.model:PivotTo(visual.currentCFrame)
 
-		if now <= visual.actionUntil then
-			visual.body.Color = Color3.fromRGB(255, 70, 70)
-		else
-			visual.body.Color = visual.baseColor
+		local isActing = now <= visual.actionUntil
+		if isActing ~= visual.isActing then
+			visual.isActing = isActing
+			visual.body.Color = if isActing then Color3.fromRGB(255, 70, 70) else visual.baseColor
 		end
 	end
 end)

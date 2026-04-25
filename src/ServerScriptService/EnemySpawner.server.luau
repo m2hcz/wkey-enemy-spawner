@@ -20,6 +20,9 @@ local MIN_MAX_ENEMIES = 1
 local MAX_MAX_ENEMIES = 250
 local SIMULATION_HZ = 20
 local SNAPSHOT_HZ = 10
+local SIMULATION_STEP = 1 / SIMULATION_HZ
+local SNAPSHOT_INTERVAL = 1 / SNAPSHOT_HZ
+local MAX_SIMULATION_STEPS = 4
 local ACTION_DISTANCE = 4.5
 local ACTION_COOLDOWN = 1.25
 local POSITION_PRECISION = 100
@@ -221,27 +224,41 @@ local function flatDistanceSquared(a, b)
 	return dx * dx + dz * dz
 end
 
-local function getClosestPlayerOnPlatform(position)
-	local closestPlayer = nil
-	local closestRoot = nil
-	local closestDistanceSquared = math.huge
+local function collectPlatformTargets()
+	local players = Players:GetPlayers()
+	local targets = table.create(#players)
 
-	for _, player in ipairs(Players:GetPlayers()) do
+	for _, player in ipairs(players) do
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
 		if root and humanoid and humanoid.Health > 0 and isOnPlatform(root.Position) then
-			local distanceSquared = flatDistanceSquared(position, root.Position)
-			if distanceSquared < closestDistanceSquared then
-				closestPlayer = player
-				closestRoot = root
-				closestDistanceSquared = distanceSquared
-			end
+			targets[#targets + 1] = {
+				player = player,
+				position = root.Position,
+			}
 		end
 	end
 
-	return closestPlayer, closestRoot, closestDistanceSquared
+	return targets
+end
+
+local function getClosestTarget(position, targets)
+	local closestPlayer = nil
+	local closestPosition = nil
+	local closestDistanceSquared = math.huge
+
+	for _, target in ipairs(targets) do
+		local distanceSquared = flatDistanceSquared(position, target.position)
+		if distanceSquared < closestDistanceSquared then
+			closestPlayer = target.player
+			closestPosition = target.position
+			closestDistanceSquared = distanceSquared
+		end
+	end
+
+	return closestPlayer, closestPosition, closestDistanceSquared
 end
 
 local function configPayload()
@@ -345,13 +362,13 @@ local function clearEnemies(sourceName)
 	print(string.format("[EnemySpawner] %s cleared all enemies.", sourceName))
 end
 
-local function updateEnemy(enemy, dt, now)
-	local targetPlayer, targetRoot, targetDistanceSquared = getClosestPlayerOnPlatform(enemy.position)
+local function updateEnemy(enemy, dt, now, targets)
+	local targetPlayer, targetPlayerPosition, targetDistanceSquared = getClosestTarget(enemy.position, targets)
 	local targetPosition
 	local speed = enemy.speed
 
-	if targetRoot then
-		targetPosition = Vector3.new(targetRoot.Position.X, enemy.position.Y, targetRoot.Position.Z)
+	if targetPlayerPosition then
+		targetPosition = Vector3.new(targetPlayerPosition.X, enemy.position.Y, targetPlayerPosition.Z)
 
 		if targetDistanceSquared <= ACTION_DISTANCE * ACTION_DISTANCE and now - enemy.lastActionAt >= ACTION_COOLDOWN then
 			enemy.lastActionAt = now
@@ -385,12 +402,17 @@ local function updateEnemy(enemy, dt, now)
 end
 
 local function updateEnemies(dt)
+	if #enemyOrder == 0 then
+		return
+	end
+
 	local now = os.clock()
+	local targets = collectPlatformTargets()
 
 	for _, id in ipairs(enemyOrder) do
 		local enemy = enemies[id]
 		if enemy then
-			updateEnemy(enemy, dt, now)
+			updateEnemy(enemy, dt, now, targets)
 		end
 	end
 end
@@ -504,15 +526,14 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	simulationAccumulator += dt
-	if simulationAccumulator >= 1 / SIMULATION_HZ then
-		local step = simulationAccumulator
-		simulationAccumulator = 0
-		updateEnemies(step)
+	simulationAccumulator = math.min(simulationAccumulator + dt, SIMULATION_STEP * MAX_SIMULATION_STEPS)
+	while simulationAccumulator >= SIMULATION_STEP do
+		simulationAccumulator -= SIMULATION_STEP
+		updateEnemies(SIMULATION_STEP)
 	end
 
 	snapshotAccumulator += dt
-	if snapshotAccumulator >= 1 / SNAPSHOT_HZ then
+	if snapshotAccumulator >= SNAPSHOT_INTERVAL then
 		snapshotAccumulator = 0
 		sendSnapshot()
 	end

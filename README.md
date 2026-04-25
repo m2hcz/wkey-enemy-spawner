@@ -21,7 +21,9 @@ Take-home assignment project for a performant Roblox enemy spawner built with Ro
 
 The server owns the authoritative enemy list and simulates enemy movement as plain Luau data, not as moving replicated Parts. Clients create local visual enemies from server spawn payloads and interpolate low-frequency, quantized position snapshots.
 
-This keeps Roblox's default physics replication out of the hot path. The server only sends compact enemy state snapshots at 10 Hz, while clients render smooth movement locally.
+This keeps Roblox's default physics replication out of the hot path. The server only sends compact enemy state snapshots at 10 Hz, while clients render smooth movement locally with short dead-reckoning prediction so enemies do not appear to stutter between packets.
+
+The server simulation uses fixed movement steps and collects valid platform player targets once per simulation tick, then reuses that target list for all enemies. This keeps the chase logic stable and avoids repeated character lookups as enemy count increases.
 
 Enemy randomization is generated once on the server and included in the spawn/sync payload, so all clients see the same ID, color, material, size, and movement speed for each enemy.
 
