@@ -352,6 +352,26 @@ remote.OnClientEvent:Connect(function(message, data)
 	end
 end)
 
+local mouse = localPlayer:GetMouse()
+mouse.Button1Down:Connect(function()
+	local target = mouse.Target
+	while target and target ~= workspace do
+		local id = target:GetAttribute("EnemyId")
+		if id then
+			print(string.format("[EnemyClient] Clicked enemy %s.", id))
+			remote:FireServer("EnemyClicked", id)
+
+			local visual = visuals[id]
+			if visual then
+				visual.actionUntil = os.clock() + 0.2
+			end
+			return
+		end
+
+		target = target.Parent
+	end
+end)
+
 RunService.RenderStepped:Connect(function(dt)
 	local alpha = 1 - math.exp(-dt * 18)
 	local now = os.clock()

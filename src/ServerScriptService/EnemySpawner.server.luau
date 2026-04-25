@@ -369,6 +369,8 @@ remote.OnServerEvent:Connect(function(player, message, data)
 		setConfig(player, data)
 	elseif message == "KillAll" then
 		clearEnemies(player.Name)
+	elseif message == "EnemyClicked" and type(data) == "string" and enemies[data] then
+		print(string.format("[EnemySpawner] %s clicked enemy %s.", player.Name, data))
 	end
 end)
 
