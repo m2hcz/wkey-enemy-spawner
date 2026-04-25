@@ -1,0 +1,6 @@
+build/
+*.rbxl
+*.rbxl.lock
+*.tmp
+.DS_Store
+Thumbs.db

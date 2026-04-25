@@ -1,0 +1,27 @@
+{
+  "name": "wkey-enemy-spawner",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage"
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "EnemySpawner": {
+        "$path": "src/ServerScriptService/EnemySpawner.server.luau"
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "EnemyClient": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/EnemyClient.client.luau"
+        }
+      }
+    }
+  }
+}
