@@ -52,18 +52,3 @@ rojo build default.project.json -o build/WKEYEnemySpawner.rbxlx
 - Press `Kill All` to remove all current enemies.
 - Click any enemy to print its ID on the client and server.
 
-## Commit History Shape
-
-This repository is intentionally committed in small increments:
-
-1. Rojo project scaffold.
-2. Arena platform and spawn controller.
-3. Server-authored enemy IDs and random variants.
-4. Platform chasing, idle wandering, and proximity action.
-5. Compact snapshot replication.
-6. Client-side visual enemies and interpolation.
-7. UI controls for spawn settings and kill all.
-8. Click reporting for enemy IDs.
-9. Documentation and submission explanation.
-
-That mirrors the assignment requirements and keeps the implementation reviewable.
