@@ -25,6 +25,25 @@ local ACTION_COOLDOWN = 1.25
 local POSITION_PRECISION = 100
 local YAW_PRECISION = 1000
 
+local REMOTE_RATE_LIMITS = {
+	RequestSync = {
+		capacity = 2,
+		refillPerSecond = 0.5,
+	},
+	SetConfig = {
+		capacity = 3,
+		refillPerSecond = 1,
+	},
+	KillAll = {
+		capacity = 1,
+		refillPerSecond = 0.2,
+	},
+	EnemyClicked = {
+		capacity = 8,
+		refillPerSecond = 4,
+	},
+}
+
 local config = {
 	spawnRate = DEFAULT_SPAWN_RATE,
 	maxEnemies = DEFAULT_MAX_ENEMIES,
@@ -88,6 +107,7 @@ local spawnAccumulator = 0
 local simulationAccumulator = 0
 local snapshotAccumulator = 0
 local serverRng = Random.new()
+local remoteBuckets = {}
 
 local enemyMaterials = {
 	Enum.Material.Plastic,
@@ -109,6 +129,57 @@ local enemyColors = {
 
 local function roundTo(value, precision)
 	return math.round(value * precision) / precision
+end
+
+local function isFiniteNumber(value)
+	return type(value) == "number" and value == value and value > -math.huge and value < math.huge
+end
+
+local function getRemoteBucket(player, message)
+	local limit = REMOTE_RATE_LIMITS[message]
+	if not limit then
+		return nil, nil
+	end
+
+	local playerBuckets = remoteBuckets[player]
+	if not playerBuckets then
+		playerBuckets = {}
+		remoteBuckets[player] = playerBuckets
+	end
+
+	local bucket = playerBuckets[message]
+	if not bucket then
+		bucket = {
+			tokens = limit.capacity,
+			updatedAt = os.clock(),
+		}
+		playerBuckets[message] = bucket
+	end
+
+	return bucket, limit
+end
+
+local function allowRemote(player, message)
+	if type(message) ~= "string" then
+		return false
+	end
+
+	local bucket, limit = getRemoteBucket(player, message)
+	if not bucket then
+		return false
+	end
+
+	local now = os.clock()
+	local elapsed = math.max(0, now - bucket.updatedAt)
+	bucket.updatedAt = now
+	bucket.tokens = math.min(limit.capacity, bucket.tokens + elapsed * limit.refillPerSecond)
+
+	if bucket.tokens < 1 then
+		return false
+	end
+
+	bucket.tokens -= 1
+	return true
 end
 
 local function colorPayload(color)
@@ -264,6 +335,10 @@ local function spawnEnemy()
 end
 
 local function clearEnemies(sourceName)
+	if #enemyOrder == 0 then
+		return
+	end
+
 	table.clear(enemies)
 	table.clear(enemyOrder)
 	remote:FireAllClients("Clear")
@@ -345,12 +420,26 @@ local function setConfig(player, requestedConfig)
 		return
 	end
 
-	if type(requestedConfig.spawnRate) == "number" then
-		config.spawnRate = math.clamp(requestedConfig.spawnRate, MIN_SPAWN_RATE, MAX_SPAWN_RATE)
+	local changed = false
+
+	if isFiniteNumber(requestedConfig.spawnRate) then
+		local nextSpawnRate = math.clamp(requestedConfig.spawnRate, MIN_SPAWN_RATE, MAX_SPAWN_RATE)
+		if nextSpawnRate ~= config.spawnRate then
+			config.spawnRate = nextSpawnRate
+			changed = true
+		end
 	end
 
-	if type(requestedConfig.maxEnemies) == "number" then
-		config.maxEnemies = math.clamp(math.round(requestedConfig.maxEnemies), MIN_MAX_ENEMIES, MAX_MAX_ENEMIES)
+	if isFiniteNumber(requestedConfig.maxEnemies) then
+		local nextMaxEnemies = math.clamp(math.round(requestedConfig.maxEnemies), MIN_MAX_ENEMIES, MAX_MAX_ENEMIES)
+		if nextMaxEnemies ~= config.maxEnemies then
+			config.maxEnemies = nextMaxEnemies
+			changed = true
+		end
+	end
+
+	if not changed then
+		return
 	end
 
 	remote:FireAllClients("Config", configPayload())
@@ -363,13 +452,22 @@ local function setConfig(player, requestedConfig)
 end
 
 remote.OnServerEvent:Connect(function(player, message, data)
+	if not allowRemote(player, message) then
+		return
+	end
+
 	if message == "RequestSync" then
 		syncPlayer(player)
 	elseif message == "SetConfig" then
 		setConfig(player, data)
 	elseif message == "KillAll" then
 		clearEnemies(player.Name)
-	elseif message == "EnemyClicked" and type(data) == "string" and enemies[data] then
+	elseif message == "EnemyClicked"
+		and type(data) == "string"
+		and #data <= 16
+		and string.match(data, "^EN%-%d+$")
+		and enemies[data]
+	then
 		print(string.format("[EnemySpawner] %s clicked enemy %s.", player.Name, data))
 	end
 end)
@@ -388,6 +486,10 @@ for _, player in ipairs(Players:GetPlayers()) do
 end
 
 Players.PlayerAdded:Connect(connectPlayer)
+
+Players.PlayerRemoving:Connect(function(player)
+	remoteBuckets[player] = nil
+end)
 
 RunService.Heartbeat:Connect(function(dt)
 	local spawnInterval = 1 / config.spawnRate

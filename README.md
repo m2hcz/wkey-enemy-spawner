@@ -15,6 +15,7 @@ Take-home assignment project for a performant Roblox enemy spawner built with Ro
 - Ignores players outside the platform.
 - Prints an enemy action when an enemy reaches a player.
 - Prints clicked enemy IDs on both client and server.
+- Rate-limits client RemoteEvent actions to reduce exploit spam.
 
 ## Technical Approach
 
@@ -23,6 +24,8 @@ The server owns the authoritative enemy list and simulates enemy movement as pla
 This keeps Roblox's default physics replication out of the hot path. The server only sends compact enemy state snapshots at 10 Hz, while clients render smooth movement locally.
 
 Enemy randomization is generated once on the server and included in the spawn/sync payload, so all clients see the same ID, color, material, size, and movement speed for each enemy.
+
+Client-to-server requests are validated and rate-limited per player/action. This prevents a client from repeatedly forcing expensive sync payloads, config broadcasts, kill-all actions, or server console spam through click reports.
 
 ## Running
 
