@@ -15,6 +15,7 @@ local HALF_Z = PLATFORM_SIZE.Z / 2
 local DEFAULT_SPAWN_RATE = 1
 local DEFAULT_MAX_ENEMIES = 20
 local SIMULATION_HZ = 20
+local SNAPSHOT_HZ = 10
 local ACTION_DISTANCE = 4.5
 local ACTION_COOLDOWN = 1.25
 local POSITION_PRECISION = 100
@@ -81,6 +82,7 @@ local enemyOrder = {}
 local nextEnemyNumber = 0
 local spawnAccumulator = 0
 local simulationAccumulator = 0
+local snapshotAccumulator = 0
 local serverRng = Random.new()
 
 local enemyMaterials = {
@@ -167,6 +169,59 @@ local function getClosestPlayerOnPlatform(position)
 	return closestPlayer, closestRoot, closestDistanceSquared
 end
 
+local function configPayload()
+	return {
+		spawnRate = roundTo(config.spawnRate, 100),
+		maxEnemies = config.maxEnemies,
+	}
+end
+
+local function spawnPayload(enemy)
+	return {
+		id = enemy.id,
+		x = roundTo(enemy.position.X, POSITION_PRECISION),
+		y = roundTo(enemy.position.Y, POSITION_PRECISION),
+		z = roundTo(enemy.position.Z, POSITION_PRECISION),
+		yaw = roundTo(enemy.yaw, YAW_PRECISION),
+		scale = roundTo(enemy.scale, 100),
+		radius = roundTo(enemy.radius, 100),
+		speed = roundTo(enemy.speed, 100),
+		material = enemy.material.Name,
+		color = colorPayload(enemy.color),
+	}
+end
+
+local function snapshotPayload()
+	local snapshot = table.create(#enemyOrder)
+
+	for index, id in ipairs(enemyOrder) do
+		local enemy = enemies[id]
+		if enemy then
+			snapshot[index] = {
+				id,
+				roundTo(enemy.position.X, POSITION_PRECISION),
+				roundTo(enemy.position.Z, POSITION_PRECISION),
+				roundTo(enemy.yaw, YAW_PRECISION),
+			}
+		end
+	end
+
+	return snapshot
+end
+
+local function currentEnemyPayloads()
+	local payloads = table.create(#enemyOrder)
+
+	for index, id in ipairs(enemyOrder) do
+		local enemy = enemies[id]
+		if enemy then
+			payloads[index] = spawnPayload(enemy)
+		end
+	end
+
+	return payloads
+end
+
 local function spawnEnemy()
 	if #enemyOrder >= config.maxEnemies then
 		return
@@ -201,18 +256,7 @@ local function spawnEnemy()
 
 	enemies[id] = enemy
 	table.insert(enemyOrder, id)
-	remote:FireAllClients("Spawn", {
-		id = enemy.id,
-		x = roundTo(enemy.position.X, POSITION_PRECISION),
-		y = roundTo(enemy.position.Y, POSITION_PRECISION),
-		z = roundTo(enemy.position.Z, POSITION_PRECISION),
-		yaw = roundTo(enemy.yaw, YAW_PRECISION),
-		scale = roundTo(enemy.scale, 100),
-		radius = roundTo(enemy.radius, 100),
-		speed = roundTo(enemy.speed, 100),
-		material = enemy.material.Name,
-		color = colorPayload(enemy.color),
-	})
+	remote:FireAllClients("Spawn", spawnPayload(enemy))
 end
 
 local function updateEnemy(enemy, dt, now)
@@ -265,6 +309,32 @@ local function updateEnemies(dt)
 	end
 end
 
+local function sendSnapshot()
+	if #enemyOrder == 0 then
+		return
+	end
+
+	remote:FireAllClients("Snapshot", snapshotPayload())
+end
+
+local function syncPlayer(player)
+	remote:FireClient(player, "Sync", {
+		config = configPayload(),
+		platform = {
+			sizeX = PLATFORM_SIZE.X,
+			sizeZ = PLATFORM_SIZE.Z,
+			topY = PLATFORM_TOP_Y,
+		},
+		enemies = currentEnemyPayloads(),
+	})
+end
+
+remote.OnServerEvent:Connect(function(player, message)
+	if message == "RequestSync" then
+		syncPlayer(player)
+	end
+end)
+
 local function connectPlayer(player)
 	player.CharacterAdded:Connect(function(character)
 		local root = character:WaitForChild("HumanoidRootPart", 10)
@@ -298,5 +368,11 @@ RunService.Heartbeat:Connect(function(dt)
 		local step = simulationAccumulator
 		simulationAccumulator = 0
 		updateEnemies(step)
+	end
+
+	snapshotAccumulator += dt
+	if snapshotAccumulator >= 1 / SNAPSHOT_HZ then
+		snapshotAccumulator = 0
+		sendSnapshot()
 	end
 end)
