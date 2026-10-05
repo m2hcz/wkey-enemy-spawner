@@ -1,8 +1,14 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show Colors;
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/services.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+import 'package:minuta_native/minuta_native.dart';
 
 import '../ai_settings.dart';
+import '../assistant_launcher.dart';
 import '../models.dart';
 import '../store.dart';
 import '../theme.dart';
@@ -17,8 +23,84 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _query = '';
+  bool _assistantActive = false;
+  StreamSubscription<Map<String, dynamic>>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _sub = MinutaNative.messages.listen((m) async {
+      if (m['event'] == 'saved') {
+        await NotesStore.instance.reload();
+        await _refreshAssistant();
+        final note = NotesStore.instance.byId('${m['id']}');
+        if (note != null && mounted) {
+          Navigator.of(context).popUntil((r) => r.isFirst);
+          _open(note);
+        }
+      }
+    });
+    _refreshAssistant();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      NotesStore.instance.reload();
+      _refreshAssistant();
+    }
+  }
+
+  Future<void> _refreshAssistant() async {
+    if (!Platform.isAndroid) return;
+    final active = await FlutterOverlayWindow.isActive();
+    if (mounted && active != _assistantActive) setState(() => _assistantActive = active);
+  }
+
+  Future<void> _startAssistant() async {
+    HapticFeedback.mediumImpact();
+    if (!await _ensureConfigured(allowSkip: false)) return;
+    if (!mounted) return;
+    await launchAssistant(context);
+    await _refreshAssistant();
+  }
+
+  /// Returns true when the user can go on (AI configured, or chose to skip).
+  Future<bool> _ensureConfigured({required bool allowSkip}) async {
+    final s = SettingsStore.instance.value;
+    if (s.chatReady && s.sttReady) return true;
+    final go = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Conecte sua IA'),
+        content: const Text(
+            '\nPara transcrever e responder, informe as chaves de API do provedor que você quiser usar.'),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(allowSkip ? 'Gravar mesmo assim' : 'Cancelar'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Configurar'),
+          ),
+        ],
+      ),
+    );
+    if (go == true) _openSettings();
+    return go == false && allowSkip;
+  }
 
   Future<void> _startRecording() async {
     HapticFeedback.mediumImpact();
@@ -125,6 +207,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
+                  if (_assistantActive)
+                    SliverToBoxAdapter(
+                      child: _ActiveBanner(
+                        onStop: () async {
+                          await stopAssistant();
+                          await Future.delayed(const Duration(seconds: 1));
+                          _refreshAssistant();
+                        },
+                      ),
+                    ),
                   if (NotesStore.instance.notes.isEmpty)
                     const SliverFillRemaining(hasScrollBody: false, child: _EmptyState())
                   else ...[
@@ -151,7 +243,14 @@ class _HomeScreenState extends State<HomeScreen> {
             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 18),
-                child: Center(child: _RecordButton(onTap: _startRecording)),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _RecordButton(onTap: _startAssistant),
+                    const SizedBox(width: 12),
+                    _MicButton(onTap: _startRecording),
+                  ],
+                ),
               ),
             ),
           ),
@@ -212,13 +311,13 @@ class _EmptyState extends StatelessWidget {
         children: [
           const AppMark(size: 72),
           const SizedBox(height: 20),
-          Text('Notas instantâneas com IA',
+          Text('Seu copiloto em tempo real',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.label(context))),
           const SizedBox(height: 8),
           Text(
-            'Grave reuniões, aulas e conversas. A IA transcreve, resume e responde suas perguntas — com a API que você escolher.',
+            'Um assistente que flutua sobre qualquer app: ouve a conversa, vê sua tela e diz o que responder. No fim, gera as notas. Com a API que você escolher.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 15, height: 1.4, color: AppColors.secondary(context)),
           ),
@@ -252,12 +351,68 @@ class _RecordButton extends StatelessWidget {
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(CupertinoIcons.mic_fill, color: Colors.white, size: 22),
+            Icon(CupertinoIcons.sparkles, color: Colors.white, size: 22),
             SizedBox(width: 10),
-            Text('Nova gravação',
+            Text('Iniciar assistente',
                 style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600)),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MicButton extends StatelessWidget {
+  const _MicButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          shape: BoxShape.circle,
+          boxShadow: AppColors.shadow(context),
+        ),
+        child: const Icon(CupertinoIcons.mic_fill, color: AppColors.record, size: 22),
+      ),
+    );
+  }
+}
+
+class _ActiveBanner extends StatelessWidget {
+  const _ActiveBanner({required this.onStop});
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+      decoration: BoxDecoration(
+        gradient: AppColors.gradient,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          const Icon(CupertinoIcons.waveform, color: Colors.white, size: 20),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text('Assistente ativo sobre os outros apps',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14.5)),
+          ),
+          CupertinoButton(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            minimumSize: const Size(0, 32),
+            onPressed: onStop,
+            child: const Text('Encerrar',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+          ),
+        ],
       ),
     );
   }

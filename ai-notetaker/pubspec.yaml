@@ -40,6 +40,9 @@ dependencies:
   http: ^1.6.0
   wakelock_plus: ^1.8.1
   flutter_markdown_plus: ^1.0.12
+  minuta_native:
+    path: packages/minuta_native
+  flutter_overlay_window: ^0.5.0
 
 dev_dependencies:
   flutter_test:

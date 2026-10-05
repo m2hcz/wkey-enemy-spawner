@@ -67,7 +67,23 @@ class AiClient {
             'stream': true,
             'system': system,
             'messages': [
-              for (final m in messages) {'role': m.role, 'content': m.text},
+              for (final m in messages)
+                {
+                  'role': m.role,
+                  'content': m.imageJpeg == null
+                      ? m.text
+                      : [
+                          {
+                            'type': 'image',
+                            'source': {
+                              'type': 'base64',
+                              'media_type': 'image/jpeg',
+                              'data': base64Encode(m.imageJpeg!),
+                            },
+                          },
+                          {'type': 'text', 'text': m.text},
+                        ],
+                },
             ],
             if (_fallbackModels.contains(settings.chatModel)) 'fallbacks': 'default',
           }
@@ -76,7 +92,19 @@ class AiClient {
             'stream': true,
             'messages': [
               {'role': 'system', 'content': system},
-              for (final m in messages) {'role': m.role, 'content': m.text},
+              for (final m in messages)
+                {
+                  'role': m.role,
+                  'content': m.imageJpeg == null
+                      ? m.text
+                      : [
+                          {'type': 'text', 'text': m.text},
+                          {
+                            'type': 'image_url',
+                            'image_url': {'url': 'data:image/jpeg;base64,${base64Encode(m.imageJpeg!)}'},
+                          },
+                        ],
+                },
             ],
           };
 
@@ -257,6 +285,31 @@ You are an assistant helping the user with a ${live ? 'meeting or conversation t
 ${note.transcriptWithTimestamps.isEmpty ? '(no speech transcribed yet)' : note.transcriptWithTimestamps}
 </transcript>
 ${note.notes.isEmpty ? '' : '\n<notes>\n${note.notes}\n</notes>'}''';
+
+  static String assistantSystem(AiSettings s, Note note) => '''
+You are a real-time AI assistant in a floating window on the user's phone, helping them during a live conversation (meeting, call, interview, class, sales or negotiation). You get the transcript captured by the phone's microphone so far (no speaker labels, may contain recognition errors) and sometimes a screenshot of the user's screen.
+
+The user glances at your answer while the conversation keeps going, so:
+- Lead with the answer. No preamble, no restating the question.
+- Keep it short: at most about 80 words, bullets when helpful, unless the user asks for more.
+- When you suggest what to say, write it as lines the user can say word for word.
+- Do not invent facts that are not in the transcript or the screenshot; when you add general knowledge, keep it clearly separate.
+
+Answer in ${_lang(s)} unless the user writes in another language.
+${s.extraInstructions.trim().isEmpty ? '' : '\nAdditional instructions from the user:\n${s.extraInstructions.trim()}\n'}
+<transcript>
+${note.transcriptWithTimestamps.isEmpty ? '(nothing transcribed yet)' : note.transcriptWithTimestamps}
+</transcript>''';
+
+  static const whatToSay =
+      'What should I say next? Give 2-3 short options I can say word for word, based on the latest part of the conversation.';
+  static const analyzeScreen =
+      'Look at my screen and help me with what is on it. If there is a question, problem, message or form to answer, give the answer directly. Relate it to the conversation when relevant.';
+  static const summarySoFar =
+      'Summarize the conversation so far in 3-5 bullets, then list decisions and action items, if any.';
+  static const questionsToAsk = 'Suggest 3 smart, specific questions I could ask right now.';
+  static const autoInsight =
+      'Give one short, useful insight, fact-check or suggestion about the latest part of the conversation, in at most 2 lines. If there is nothing genuinely useful to add, reply with exactly: -';
 
   /// Splits the "TITLE: ..." first line off the generated notes.
   static (String?, String) splitTitle(String output) {

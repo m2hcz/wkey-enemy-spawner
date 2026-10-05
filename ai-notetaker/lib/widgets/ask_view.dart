@@ -188,7 +188,8 @@ class _Bubble extends StatelessWidget {
     final user = message.isUser;
     final maxW = MediaQuery.sizeOf(context).width * 0.82;
     final child = user
-        ? Text(message.text, style: const TextStyle(color: Colors.white, fontSize: 16))
+        ? Text('${message.hasImage ? '📷 ' : ''}${message.text}',
+            style: const TextStyle(color: Colors.white, fontSize: 16))
         : message.text.isEmpty && typing
             ? const CupertinoActivityIndicator()
             : MarkdownBody(

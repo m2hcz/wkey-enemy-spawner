@@ -11,18 +11,28 @@ class TranscriptSegment {
 }
 
 class ChatMessage {
-  ChatMessage({required this.role, required this.text});
+  ChatMessage({required this.role, required this.text, this.imageJpeg, bool? hasImage})
+      : hasImage = hasImage ?? imageJpeg != null;
 
   /// 'user' or 'assistant'
   final String role;
   String text;
 
+  /// Screenshot attached to this message. Kept in memory only.
+  final List<int>? imageJpeg;
+
+  /// Whether a screenshot was attached (survives saving).
+  final bool hasImage;
+
   bool get isUser => role == 'user';
 
-  Map<String, dynamic> toJson() => {'r': role, 't': text};
+  Map<String, dynamic> toJson() => {'r': role, 't': text, if (hasImage) 'img': true};
 
-  factory ChatMessage.fromJson(Map<String, dynamic> j) =>
-      ChatMessage(role: j['r'] as String? ?? 'user', text: j['t'] as String? ?? '');
+  factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(
+        role: j['r'] as String? ?? 'user',
+        text: j['t'] as String? ?? '',
+        hasImage: j['img'] as bool? ?? false,
+      );
 }
 
 class Note {

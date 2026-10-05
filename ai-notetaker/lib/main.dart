@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' show DefaultMaterialLocalizations;
 import 'package:flutter/services.dart';
 
 import 'ai_settings.dart';
+import 'overlay/assistant_overlay.dart';
 import 'screens/home_screen.dart';
 import 'store.dart';
 import 'theme.dart';
@@ -12,6 +13,13 @@ Future<void> main() async {
   await Future.wait([NotesStore.instance.load(), SettingsStore.instance.load()]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const MinutaApp());
+}
+
+/// Entry point of the floating assistant window (flutter_overlay_window).
+@pragma('vm:entry-point')
+void overlayMain() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const AssistantOverlayApp());
 }
 
 class MinutaApp extends StatelessWidget {

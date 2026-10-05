@@ -23,12 +23,16 @@ class _Chunk {
 /// Records the microphone in short segments and transcribes each segment as
 /// soon as it is closed, so the transcript (and "Ask") work during recording.
 class RecordingController extends ChangeNotifier {
-  RecordingController(this.note);
+  RecordingController(this.note, {this.keepScreenOn = true});
 
   /// Seconds of audio per transcription segment.
   static const segmentSeconds = 25;
 
   final Note note;
+
+  /// Keep the screen awake while recording (needs an Activity, so the
+  /// floating assistant turns it off).
+  final bool keepScreenOn;
   final _recorder = AudioRecorder();
   final List<_Chunk> _chunks = [];
   final List<double> levels = List.filled(48, 0, growable: true);
@@ -50,12 +54,20 @@ class RecordingController extends ChangeNotifier {
   AiSettings get _settings => SettingsStore.instance.value;
   bool get canTranscribe => _settings.sttReady;
 
-  Future<bool> start() async {
-    if (!await _recorder.hasPermission()) return false;
+  /// [checkPermission] must be false where there is no Activity (the
+  /// floating assistant); the app checks the permission before opening it.
+  Future<bool> start({bool checkPermission = true}) async {
+    if (checkPermission && !await _recorder.hasPermission()) return false;
     _dir = await NotesStore.instance.audioDir(note.id);
-    await _startSegment();
+    try {
+      await _startSegment();
+    } catch (e) {
+      transcriptionError = 'Não foi possível usar o microfone: $e';
+      notifyListeners();
+      return false;
+    }
     state = RecState.recording;
-    WakelockPlus.enable();
+    _wake(true);
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     _ampSub = _recorder
         .onAmplitudeChanged(const Duration(milliseconds: 90))
@@ -179,7 +191,7 @@ class RecordingController extends ChangeNotifier {
     await _ampSub?.cancel();
     _enqueue(await _recorder.stop(), _currentSegmentStart);
     note.durationSec = elapsedSec;
-    WakelockPlus.disable();
+    _wake(false);
     await _queue;
     // Retry anything that failed during the meeting (e.g. network drop).
     for (final c in _chunks.where((c) => !c.done)) {
@@ -194,7 +206,7 @@ class RecordingController extends ChangeNotifier {
     _ticker?.cancel();
     await _ampSub?.cancel();
     await _recorder.cancel();
-    WakelockPlus.disable();
+    _wake(false);
     state = RecState.idle;
   }
 
@@ -203,8 +215,13 @@ class RecordingController extends ChangeNotifier {
     _ticker?.cancel();
     _ampSub?.cancel();
     _recorder.dispose();
-    WakelockPlus.disable();
+    _wake(false);
     super.dispose();
+  }
+
+  void _wake(bool on) {
+    if (!keepScreenOn) return;
+    (on ? WakelockPlus.enable() : WakelockPlus.disable()).catchError((Object _) {});
   }
 }
 
