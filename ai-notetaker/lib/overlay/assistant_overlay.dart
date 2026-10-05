@@ -150,11 +150,18 @@ class _AssistantOverlayState extends State<AssistantOverlay> {
     HapticFeedback.selectionClick();
     if (expanded) {
       await FlutterOverlayWindow.resizeOverlay(WindowSize.matchParent, panelHeight, false);
+      await FlutterOverlayWindow.moveOverlay(const OverlayPosition(0, 0));
       await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
     } else {
       FocusManager.instance.primaryFocus?.unfocus();
       await FlutterOverlayWindow.updateFlag(OverlayFlag.defaultFlag);
       await FlutterOverlayWindow.resizeOverlay(bubbleSize, bubbleSize, true);
+      // Park the bubble on the right edge, clear of the status bar. The window
+      // is centred horizontally, so x is an offset from the screen centre.
+      final display = WidgetsBinding.instance.platformDispatcher.displays.first;
+      final screenWidthDp = display.size.width / display.devicePixelRatio;
+      await FlutterOverlayWindow.moveOverlay(
+          OverlayPosition(screenWidthDp / 2 - bubbleSize / 2 - 6, 140));
     }
     if (mounted) setState(() => _expanded = expanded);
   }
@@ -431,7 +438,8 @@ class _AssistantOverlayState extends State<AssistantOverlay> {
           padding: EdgeInsets.all(24),
           child: Text(
             'Toque em "O que dizer?" a qualquer momento, analise a tela ou pergunte algo. '
-            'Ative ⚡ para receber dicas automáticas.',
+            'Ative ⚡ para receber dicas automáticas.\n\n'
+            'Toque em — (no topo) para minimizar em um balão. Toque no balão para abrir de novo.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white54, fontSize: 14, height: 1.4),
           ),
